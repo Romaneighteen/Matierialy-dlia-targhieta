@@ -1,3 +1,4 @@
+version: null
 meta:
   environment: python
   toolchain:
@@ -6,8 +7,7 @@ meta:
 build:
   requirementsPath: requirements.txt
 run:
-  scriptName: app.py
+  scriptName: main.py
   command: null
   persistenceMount: /data
   containerPort: "80"
-  servicePort: "80"
