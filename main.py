@@ -1,6 +1,7 @@
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
@@ -10,20 +11,37 @@ CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
 BONUS_FILE_URL = os.getenv("BONUS_FILE_URL")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
-# Словарь для хранения отзывов
-user_reviews = {}
+# Файлы хранения
+USER_DATA_FILE = "users.json"
+REVIEW_DATA_FILE = "reviews.json"
 
-# Сохраняем пользователя в файл
+user_reviews = {}
+waiting_for_review = set()
+waiting_for_check = {}
+sent_bonus = set()
+
+# Сохранение пользователя
 def save_user(user_id, username):
-    user_data = {
+    record = {
         "user_id": user_id,
         "username": username,
         "timestamp": datetime.now().isoformat()
     }
-    with open("users.json", "a") as f:
-        f.write(json.dumps(user_data) + "\n")
+    with open(USER_DATA_FILE, "a") as f:
+        f.write(json.dumps(record) + "\n")
 
-# Проверка подписки на канал
+# Сохранение отзыва в файл
+def save_review(user_id, username, text):
+    record = {
+        "user_id": user_id,
+        "username": username,
+        "text": text,
+        "timestamp": datetime.now().isoformat()
+    }
+    with open(REVIEW_DATA_FILE, "a") as f:
+        f.write(json.dumps(record) + "\n")
+
+# Проверка подписки
 async def is_subscribed(bot, user_id):
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
@@ -31,89 +49,84 @@ async def is_subscribed(bot, user_id):
     except:
         return False
 
-# Обработка команды /start
+# Приветственное сообщение
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("\ud83d\udcdd Оставить отзыв", callback_data="review")],
-        [InlineKeyboardButton("\ud83c\udf81 Получить бонус", callback_data="bonus")]
-    ]
+    keyboard = [[InlineKeyboardButton("\ud83d\udcdd Оставить отзыв", callback_data="leave_review")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Привет! Что ты хочешь сделать?", reply_markup=reply_markup)
 
-# Обработка нажатий кнопок
+    text = (
+        "Привет! \n\n"
+        "Я очень рад, что ты решил(а) воспользоваться моими материалами. "
+        "Они помогут тебе прокачать таргет. \n\n"
+        "Чтобы получить материалы, нужно:\n"
+        "1. Оставить честный отзыв (25+ символов)\n"
+        "2. Подписаться на мой канал: {channel}\n"
+        "3. Нажать кнопку \"Проверить подписку\" после отзыва"
+    ).format(channel=CHANNEL_USERNAME)
+
+    await update.message.reply_text(text, reply_markup=reply_markup)
+
+# Обработка кнопок
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     user_id = query.from_user.id
     username = query.from_user.username or "без username"
+    await query.answer()
 
-    if query.data == "review":
-        await query.message.reply_text("Пожалуйста, отправь отзыв. Не менее 30 символов.")
-    elif query.data == "bonus":
-        if not await is_subscribed(context.bot, user_id):
-            await query.message.reply_text("Пожалуйста, подпишись на канал @tg_protarget, чтобы получить бонус.")
-            return
-        if user_id in user_reviews:
-            await query.message.reply_text("Ты уже получил бонус. Спасибо!")
-            return
-        await query.message.reply_text(f"Вот твой бонус: {BONUS_FILE_URL}")
-        save_user(user_id, username)
+    if query.data == "leave_review":
+        waiting_for_review.add(user_id)
+        await query.message.reply_text("Пожалуйста, напиши отзыв. Не менее 25 символов.")
 
-# Обработка текстовых сообщений
+    elif query.data == "check_subscription":
+        if await is_subscribed(context.bot, user_id):
+            if user_id in user_reviews and user_id not in sent_bonus:
+                msg = await query.message.reply_text(f"Спасибо! Вот ссылка на материалы: {BONUS_FILE_URL}")
+                save_user(user_id, username)
+                sent_bonus.add(user_id)
+
+                # Планируем автопроверку через 5 минут
+                waiting_for_check[user_id] = msg.message_id
+                asyncio.create_task(delayed_subscription_check(context.bot, user_id, msg.chat.id, msg.message_id))
+            else:
+                await query.message.reply_text("Пожалуйста, сначала оставь отзыв.")
+        else:
+            await query.message.reply_text("Похоже, ты не подписан на канал. Подпишись и попробуй снова.")
+
+# Проверка подписки спустя время
+async def delayed_subscription_check(bot, user_id, chat_id, message_id):
+    await asyncio.sleep(300)  # 5 минут
+    if not await is_subscribed(bot, user_id):
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=message_id)
+            await bot.send_message(chat_id=chat_id, text="Материалы были удалены, так как вы отписались от канала.")
+        except:
+            pass
+
+# Обработка текстовых сообщений (отзывы)
 async def handle_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     username = update.effective_user.username or "без username"
     text = update.message.text.strip()
 
-    if len(text) < 30:
-        await update.message.reply_text("Пожалуйста, напиши отзыв длиной не менее 30 символов.")
+    if user_id not in waiting_for_review:
         return
 
-    if user_id in user_reviews:
-        await update.message.reply_text("Ты уже отправлял отзыв. Спасибо!")
+    if len(text) < 25:
+        await update.message.reply_text("Отзыв слишком короткий. Напиши, пожалуйста, более развернуто (от 25 символов).")
         return
 
     user_reviews[user_id] = text
-    await context.bot.send_message(chat_id=ADMIN_ID, text=f"\ud83d\udc64 Новый отзыв от {user_id} (@{username}):\n{text}")
-    await update.message.reply_text("Спасибо за отзыв! Теперь ты можешь получить бонус.\nНажми \"Получить бонус\" снова.")
-    save_user(user_id, username)
+    waiting_for_review.remove(user_id)
+    save_review(user_id, username, text)
+    await context.bot.send_message(chat_id=ADMIN_ID, text=f"\ud83d\udc64 Отзыв от @{username} (ID: {user_id}):\n{text}")
 
-# Команда /users — список последних пользователей
-async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
+    keyboard = [[InlineKeyboardButton("\u2705 Проверить подписку", callback_data="check_subscription")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
-    try:
-        with open("users.json", "r") as f:
-            lines = f.readlines()
-
-        if not lines:
-            await update.message.reply_text("Пока нет пользователей.")
-            return
-
-        msg = f"\ud83d\udc65 Всего пользователей: {len(lines)}\n\n"
-        for i, line in enumerate(lines[-10:], 1):
-            user = json.loads(line)
-            msg += f"{i}. @{user['username']} | ID: {user['user_id']}\n"
-
-        await update.message.reply_text(msg)
-    except Exception as e:
-        await update.message.reply_text("Ошибка чтения списка пользователей.")
-
-# Команда /reviews — последние отзывы
-async def list_reviews(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    if not user_reviews:
-        await update.message.reply_text("Пока нет отзывов.")
-        return
-
-    msg = "\ud83d\udccb Последние отзывы:\n\n"
-    for user_id, review in list(user_reviews.items())[-5:]:
-        msg += f"\ud83d\udcdd {user_id}:\n{review}\n\n"
-
-    await update.message.reply_text(msg)
+    await update.message.reply_text(
+        "Спасибо за отзыв! Теперь подпишись на канал и нажми кнопку ниже, чтобы получить материалы.",
+        reply_markup=reply_markup
+    )
 
 # Запуск бота
 if __name__ == "__main__":
@@ -122,8 +135,6 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_review))
-    app.add_handler(CommandHandler("users", list_users))
-    app.add_handler(CommandHandler("reviews", list_reviews))
 
     print("Бот запущен...")
     app.run_polling()
