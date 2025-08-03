@@ -1,20 +1,18 @@
 import os
 import json
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     filters, ContextTypes, CallbackQueryHandler
 )
 
-# Переменные окружения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
 BONUS_FILE_URL = os.getenv("BONUS_FILE_URL")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
-# Файлы хранения
 USER_DATA_FILE = "users.json"
 REVIEW_DATA_FILE = "reviews.json"
 
@@ -23,7 +21,6 @@ waiting_for_review = set()
 waiting_for_check = {}
 sent_bonus = set()
 
-# Сохраняем пользователя
 def save_user(user_id, username):
     record = {
         "user_id": user_id,
@@ -36,7 +33,6 @@ def save_user(user_id, username):
     except Exception as e:
         print(f"[Ошибка] Не удалось сохранить пользователя: {e}")
 
-# Сохраняем отзыв
 def save_review(user_id, username, text):
     record = {
         "user_id": user_id,
@@ -50,7 +46,6 @@ def save_review(user_id, username, text):
     except Exception as e:
         print(f"[Ошибка] Не удалось сохранить отзыв: {e}")
 
-# Проверка подписки
 async def is_subscribed(bot, user_id):
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
@@ -58,7 +53,6 @@ async def is_subscribed(bot, user_id):
     except:
         return False
 
-# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("📩 Оставить отзыв", callback_data="leave_review")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -74,7 +68,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, reply_markup=reply_markup)
 
-# Кнопки отзыва и подписки
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -98,7 +91,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.message.reply_text("Похоже, ты не подписан на канал. Подпишись и попробуй снова.")
 
-# Проверка отписки через 5 минут
 async def delayed_subscription_check(bot, user_id, chat_id, message_id):
     await asyncio.sleep(300)
     if not await is_subscribed(bot, user_id):
@@ -108,7 +100,6 @@ async def delayed_subscription_check(bot, user_id, chat_id, message_id):
         except:
             pass
 
-# Обработка текстов — отзывы
 async def handle_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     username = update.effective_user.username or "без username"
@@ -137,9 +128,25 @@ async def users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
-            lines = f.readlines()[-10:]
-            users = [json.loads(line) for line in lines]
-        msg = "👥 Последние пользователи:\n" + "\n".join([f"@{u['username']} ({u['user_id']})" for u in users])
+            lines = f.readlines()
+            users = []
+            for line in lines[::-1]:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    u = json.loads(line)
+                    users.append(u)
+                except:
+                    continue
+                if len(users) >= 10:
+                    break
+        if not users:
+            await update.message.reply_text("❗ Пользователей пока нет.")
+            return
+        msg = "👥 Последние пользователи:\n" + "\n".join([
+            f"@{u['username']} ({u['user_id']})" for u in users
+        ])
         await update.message.reply_text(msg)
     except Exception as e:
         await update.message.reply_text(f"Ошибка чтения users.json: {e}")
@@ -149,9 +156,25 @@ async def reviews(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         with open(REVIEW_DATA_FILE, "r", encoding="utf-8") as f:
-            lines = f.readlines()[-10:]
-            reviews = [json.loads(line) for line in lines]
-        msg = "📝 Последние отзывы:\n\n" + "\n\n".join([f"@{r['username']} ({r['user_id']}):\n{r['text']}" for r in reviews])
+            lines = f.readlines()
+            reviews = []
+            for line in lines[::-1]:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                    reviews.append(r)
+                except:
+                    continue
+                if len(reviews) >= 10:
+                    break
+        if not reviews:
+            await update.message.reply_text("❗ Отзывов пока нет.")
+            return
+        msg = "📝 Последние отзывы:\n\n" + "\n\n".join([
+            f"@{r['username']} ({r['user_id']}):\n{r['text']}" for r in reviews
+        ])
         await update.message.reply_text(msg[:4096])
     except Exception as e:
         await update.message.reply_text(f"Ошибка чтения reviews.json: {e}")
@@ -183,8 +206,11 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
             for line in f:
-                user = json.loads(line)
+                line = line.strip()
+                if not line:
+                    continue
                 try:
+                    user = json.loads(line)
                     await context.bot.send_message(chat_id=user["user_id"], text=text)
                     count += 1
                     await asyncio.sleep(0.1)
@@ -194,7 +220,6 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Ошибка рассылки: {e}")
 
-# Тестовая запись в файл
 async def test_write(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -205,8 +230,6 @@ async def test_write(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Тестовая запись в файл прошла успешно.")
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка записи: {e}")
-
-# ========== Запуск ==========
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
