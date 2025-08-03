@@ -118,7 +118,7 @@ async def handle_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_reviews[user_id] = text
     waiting_for_review.remove(user_id)
     save_review(user_id, username, text)
-    await context.bot.send_message(chat_id=ADMIN_ID, text=f"\ud83d\udc64 Отзыв от @{username} (ID: {user_id}):\n{text}")
+    await context.bot.send_message(chat_id=ADMIN_ID, text=f\"👤 Отзыв от @{username} (ID: {user_id}):\\n{text}\")
 
     keyboard = [[InlineKeyboardButton("\u2705 Проверить подписку", callback_data="check_subscription")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -138,4 +138,5 @@ if __name__ == "__main__":
 
     print("Бот запущен...")
     app.run_polling()
+
 
