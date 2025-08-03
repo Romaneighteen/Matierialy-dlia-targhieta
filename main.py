@@ -71,6 +71,7 @@ async def delayed_subscription_check(bot, user_id, chat_id, message_id):
 
 async def handle_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    username = update.effective_user.username or "—"
     text = update.message.text.strip()
 
     if user_id not in waiting_for_review:
@@ -82,6 +83,13 @@ async def handle_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_reviews[user_id] = text
     waiting_for_review.remove(user_id)
+
+    try:
+        admin_text = f"👤 Отзыв от @{username} (ID: {user_id}):\n{text}"
+        print("[INFO] Пересылаем отзыв админу:", admin_text)
+        await context.bot.send_message(chat_id=ADMIN_ID, text=admin_text)
+    except Exception as e:
+        print(f"[ERROR] Не удалось отправить отзыв админу: {e}")
 
     keyboard = [[InlineKeyboardButton("✅ Проверить подписку", callback_data="check_subscription")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
