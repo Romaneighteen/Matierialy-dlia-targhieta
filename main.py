@@ -100,7 +100,7 @@ async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text("Ошибка чтения списка пользователей.")
 
-# Команда /отзывы — последние отзывы
+# Команда /reviews — последние отзывы
 async def list_reviews(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -123,7 +123,7 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_review))
     app.add_handler(CommandHandler("users", list_users))
-    app.add_handler(CommandHandler("\u043e\u0442\u0437\u044b\u0432\u044b", list_reviews))
+    app.add_handler(CommandHandler("reviews", list_reviews))
 
     print("Бот запущен...")
     app.run_polling()
