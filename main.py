@@ -51,13 +51,13 @@ async def is_subscribed(bot, user_id):
 
 # Приветственное сообщение
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[InlineKeyboardButton("\ud83d\udcdd Оставить отзыв", callback_data="leave_review")]]
+    keyboard = [[InlineKeyboardButton("📩 Оставить отзыв", callback_data="leave_review")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     text = (
         "Привет! \n\n"
         "Я очень рад, что ты решил(а) воспользоваться моими материалами. "
-        "Они помогут тебе прокачать свои знания. \n\n"
+        "Они помогут тебе прокачать таргет. \n\n"
         "Чтобы получить материалы, нужно:\n"
         "1. Оставить честный отзыв (25+ символов)\n"
         "2. Подписаться на мой канал: {channel}\n"
@@ -118,9 +118,9 @@ async def handle_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_reviews[user_id] = text
     waiting_for_review.remove(user_id)
     save_review(user_id, username, text)
-    await context.bot.send_message(chat_id=ADMIN_ID, text=f\"👤 Отзыв от @{username} (ID: {user_id}):\\n{text}\")
+    await context.bot.send_message(chat_id=ADMIN_ID, text=f"👤 Отзыв от @{username} (ID: {user_id}):\n{text}")
 
-    keyboard = [[InlineKeyboardButton("\u2705 Проверить подписку", callback_data="check_subscription")]]
+    keyboard = [[InlineKeyboardButton("✅ Проверить подписку", callback_data="check_subscription")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
@@ -138,5 +138,3 @@ if __name__ == "__main__":
 
     print("Бот запущен...")
     app.run_polling()
-
-
