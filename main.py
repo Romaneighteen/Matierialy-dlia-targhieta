@@ -138,3 +138,87 @@ if __name__ == "__main__":
 
     print("Бот запущен...")
     app.run_polling()
+
+... (весь текущий код остаётся прежним, ДОБАВЛЯЕМ ВНИЗУ) ...
+
+# ================== АДМИН-КОМАНДЫ ==================
+
+# Показывает последних пользователей
+async def users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    try:
+        with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
+            lines = f.readlines()[-10:]
+            users = [json.loads(line) for line in lines]
+        msg = "👥 Последние пользователи:\n" + "\n".join(
+            [f"@{u['username']} ({u['user_id']})" for u in users]
+        )
+        await update.message.reply_text(msg)
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка чтения users.json: {e}")
+
+# Показывает последние отзывы
+async def reviews(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    try:
+        with open(REVIEW_DATA_FILE, "r", encoding="utf-8") as f:
+            lines = f.readlines()[-10:]
+            reviews = [json.loads(line) for line in lines]
+        msg = "📝 Последние отзывы:\n\n" + "\n\n".join(
+            [f"@{r['username']} ({r['user_id']}):\n{r['text']}" for r in reviews]
+        )
+        await update.message.reply_text(msg[:4096])
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка чтения reviews.json: {e}")
+
+# Отправка файла отзывов
+async def export_reviews(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    try:
+        await update.message.reply_document(InputFile(REVIEW_DATA_FILE))
+    except Exception as e:
+        await update.message.reply_text(f"Не удалось отправить файл: {e}")
+
+# Отправка файла пользователей
+async def export_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    try:
+        await update.message.reply_document(InputFile(USER_DATA_FILE))
+    except Exception as e:
+        await update.message.reply_text(f"Не удалось отправить файл: {e}")
+
+# Простая заглушка рассылки
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if not context.args:
+        await update.message.reply_text("Укажи текст: /broadcast Привет, вот тебе бонус!")
+        return
+    text = " ".join(context.args)
+    count = 0
+    try:
+        with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                user = json.loads(line)
+                try:
+                    await context.bot.send_message(chat_id=user["user_id"], text=text)
+                    count += 1
+                    await asyncio.sleep(0.1)
+                except:
+                    continue
+        await update.message.reply_text(f"✅ Рассылка завершена. Отправлено: {count}")
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка рассылки: {e}")
+
+# Регистрируем команды
+    app.add_handler(CommandHandler("users", users))
+    app.add_handler(CommandHandler("reviews", reviews))
+    app.add_handler(CommandHandler("export_reviews", export_reviews))
+    app.add_handler(CommandHandler("export_users", export_users))
+    app.add_handler(CommandHandler("broadcast", broadcast))
+
+
