@@ -154,4 +154,72 @@ async def reviews(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = "📝 Последние отзывы:\n\n" + "\n\n".join([f"@{r['username']} ({r['user_id']}):\n{r['text']}" for r in reviews])
         await update.message.reply_text(msg[:4096])
     except Exception as e:
-        await update.message.reply_text(f"Ошибка ч
+        await update.message.reply_text(f"Ошибка чтения reviews.json: {e}")
+
+async def export_reviews(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    try:
+        await update.message.reply_document(InputFile(REVIEW_DATA_FILE))
+    except Exception as e:
+        await update.message.reply_text(f"Не удалось отправить файл: {e}")
+
+async def export_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    try:
+        await update.message.reply_document(InputFile(USER_DATA_FILE))
+    except Exception as e:
+        await update.message.reply_text(f"Не удалось отправить файл: {e}")
+
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if not context.args:
+        await update.message.reply_text("Укажи текст: /broadcast Твой бонус!")
+        return
+    text = " ".join(context.args)
+    count = 0
+    try:
+        with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                user = json.loads(line)
+                try:
+                    await context.bot.send_message(chat_id=user["user_id"], text=text)
+                    count += 1
+                    await asyncio.sleep(0.1)
+                except:
+                    continue
+        await update.message.reply_text(f"✅ Рассылка завершена. Отправлено: {count}")
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка рассылки: {e}")
+
+# Тестовая запись в файл
+async def test_write(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    try:
+        test_data = {"test": True, "timestamp": datetime.now().isoformat()}
+        with open("test_write.json", "w", encoding="utf-8") as f:
+            json.dump(test_data, f, ensure_ascii=False)
+        await update.message.reply_text("✅ Тестовая запись в файл прошла успешно.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка записи: {e}")
+
+# ========== Запуск ==========
+
+if __name__ == "__main__":
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("users", users))
+    app.add_handler(CommandHandler("reviews", reviews))
+    app.add_handler(CommandHandler("export_reviews", export_reviews))
+    app.add_handler(CommandHandler("export_users", export_users))
+    app.add_handler(CommandHandler("broadcast", broadcast))
+    app.add_handler(CommandHandler("test_write", test_write))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_review))
+
+    print("Бот запущен...")
+    app.run_polling()
