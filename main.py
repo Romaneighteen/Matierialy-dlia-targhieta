@@ -2,162 +2,128 @@ import os
 import json
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    ConversationHandler,
-    filters,
-)
-from dotenv import load_dotenv
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
-load_dotenv()
-
+# Переменные окружения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
 BONUS_FILE_URL = os.getenv("BONUS_FILE_URL")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
+# Словарь для хранения отзывов
 user_reviews = {}
-users_received_bonus = set()
-USERS_FILE = "users.json"
 
-ASK_REVIEW = 1
+# Сохраняем пользователя в файл
+def save_user(user_id, username):
+    user_data = {
+        "user_id": user_id,
+        "username": username,
+        "timestamp": datetime.now().isoformat()
+    }
+    with open("users.json", "a") as f:
+        f.write(json.dumps(user_data) + "\n")
 
-# --- Работа с базой пользователей ---
-def load_users():
-    if os.path.exists(USERS_FILE):
-        with open(USERS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return []
+# Проверка подписки на канал
+async def is_subscribed(bot, user_id):
+    try:
+        member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except:
+        return False
 
-def save_users(users):
-    with open(USERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(users, f, ensure_ascii=False, indent=2)
-
-def add_user(user):
-    users = load_users()
-    if not any(u["id"] == user.id for u in users):
-        users.append({
-            "id": user.id,
-            "username": user.username,
-            "name": user.first_name,
-            "status": "new",
-            "joined": datetime.now().strftime("%Y-%m-%d")
-        })
-        save_users(users)
-
-def update_user_status(user_id, new_status):
-    users = load_users()
-    for u in users:
-        if u["id"] == user_id:
-            u["status"] = new_status
-            break
-    save_users(users)
-
-# --- /start ---
+# Обработка команды /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    add_user(user)
-
     keyboard = [
-        [InlineKeyboardButton("📝 Оставить отзыв", callback_data="leave_review")],
-        [InlineKeyboardButton("🎁 Получить бонус", callback_data="get_bonus")]
+        [InlineKeyboardButton("\ud83d\udcdd Оставить отзыв", callback_data="review")],
+        [InlineKeyboardButton("\ud83c\udf81 Получить бонус", callback_data="bonus")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "Привет! Чтобы получить бонусные материалы, оставь отзыв о курсе и подпишись на канал:\n\n"
-        "📢 https://t.me/tg_protarget",
-        reply_markup=reply_markup
-    )
+    await update.message.reply_text("Привет! Что ты хочешь сделать?", reply_markup=reply_markup)
 
-# --- Инлайн-кнопки ---
+# Обработка нажатий кнопок
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
+    username = query.from_user.username or "без username"
 
-    if query.data == "leave_review":
-        await query.message.reply_text("Напиши, пожалуйста, отзыв одним сообщением (минимум 30 символов):")
-        return ASK_REVIEW
+    if query.data == "review":
+        await query.message.reply_text("Пожалуйста, отправь отзыв. Не менее 30 символов.")
+    elif query.data == "bonus":
+        if not await is_subscribed(context.bot, user_id):
+            await query.message.reply_text("Пожалуйста, подпишись на канал @tg_protarget, чтобы получить бонус.")
+            return
+        if user_id in user_reviews:
+            await query.message.reply_text("Ты уже получил бонус. Спасибо!")
+            return
+        await query.message.reply_text(f"Вот твой бонус: {BONUS_FILE_URL}")
+        save_user(user_id, username)
 
-    elif query.data == "get_bonus":
-        if user_id not in user_reviews:
-            await query.message.reply_text("❗ Сначала оставь отзыв, затем сможешь получить бонус.")
-            return ConversationHandler.END
-
-        chat_member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-        if chat_member.status not in ['member', 'administrator', 'creator']:
-            await query.message.reply_text("❗ Пожалуйста, подпишись на канал: https://t.me/tg_protarget")
-            return ConversationHandler.END
-
-        # Отправляем бонус
-        await query.message.reply_text(f"📎 Вот ваша ссылка на бонусные материалы:\n{BONUS_FILE_URL}")
-        users_received_bonus.add(user_id)
-        update_user_status(user_id, "получил_материалы")
-        return ConversationHandler.END
-
-# --- Обработка отзыва ---
+# Обработка текстовых сообщений
 async def handle_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    review_text = update.message.text.strip()
+    user_id = update.effective_user.id
+    username = update.effective_user.username or "без username"
+    text = update.message.text.strip()
 
-    if len(review_text) < 30:
-        await update.message.reply_text("Пожалуйста, напиши более развёрнутый отзыв (от 30 символов).")
-        return ASK_REVIEW
+    if len(text) < 30:
+        await update.message.reply_text("Пожалуйста, напиши отзыв длиной не менее 30 символов.")
+        return
 
-    user_reviews[user_id] = review_text
+    if user_id in user_reviews:
+        await update.message.reply_text("Ты уже отправлял отзыв. Спасибо!")
+        return
 
-    await context.bot.send_message(chat_id=ADMIN_ID,
-                                   text=f"📝 Новый отзыв от @{user.username}:\n\n{review_text}")
+    user_reviews[user_id] = text
+    await context.bot.send_message(chat_id=ADMIN_ID, text=f"\ud83d\udc64 Новый отзыв от {user_id} (@{username}):\n{text}")
+    await update.message.reply_text("Спасибо за отзыв! Теперь ты можешь получить бонус.\nНажми \"Получить бонус\" снова.")
+    save_user(user_id, username)
 
-    await update.message.reply_text("Спасибо за отзыв! Теперь ты можешь получить бонусные материалы 👇")
-
-    keyboard = [[InlineKeyboardButton("🎁 Получить бонус", callback_data="get_bonus")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Нажми кнопку ниже, чтобы проверить подписку и получить бонус:",
-                                    reply_markup=reply_markup)
-    return ConversationHandler.END
-
-# --- Рассылка (только для администратора) ---
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Команда /users — список последних пользователей
+async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
-    msg = " ".join(context.args)
-    if not msg:
-        await update.message.reply_text("Напиши текст после команды: /broadcast ваш текст")
+
+    try:
+        with open("users.json", "r") as f:
+            lines = f.readlines()
+
+        if not lines:
+            await update.message.reply_text("Пока нет пользователей.")
+            return
+
+        msg = f"\ud83d\udc65 Всего пользователей: {len(lines)}\n\n"
+        for i, line in enumerate(lines[-10:], 1):
+            user = json.loads(line)
+            msg += f"{i}. @{user['username']} | ID: {user['user_id']}\n"
+
+        await update.message.reply_text(msg)
+    except Exception as e:
+        await update.message.reply_text("Ошибка чтения списка пользователей.")
+
+# Команда /отзывы — последние отзывы
+async def list_reviews(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
         return
 
-    users = load_users()
-    count = 0
-    for user in users:
-        try:
-            await context.bot.send_message(chat_id=user["id"], text=msg)
-            count += 1
-        except Exception as e:
-            print(f"❌ Ошибка при отправке {user['id']}: {e}")
-    await update.message.reply_text(f"✅ Рассылка отправлена {count} пользователям.")
+    if not user_reviews:
+        await update.message.reply_text("Пока нет отзывов.")
+        return
 
-# --- Основной блок ---
-def main():
+    msg = "\ud83d\udccb Последние отзывы:\n\n"
+    for user_id, review in list(user_reviews.items())[-5:]:
+        msg += f"\ud83d\udcdd {user_id}:\n{review}\n\n"
+
+    await update.message.reply_text(msg)
+
+# Запуск бота
+if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(button_handler)],
-        states={ASK_REVIEW: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_review)]},
-        fallbacks=[],
-    )
-
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("broadcast", broadcast))
-    app.add_handler(conv_handler)
-    app.add_handler(CallbackQueryHandler(button_handler))  # обработка инлайн-кнопок
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_review))
+    app.add_handler(CommandHandler("users", list_users))
+    app.add_handler(CommandHandler("\u043e\u0442\u0437\u044b\u0432\u044b", list_reviews))
 
     print("Бот запущен...")
     app.run_polling()
-
-if __name__ == "__main__":
-    main()
